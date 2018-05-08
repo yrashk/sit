@@ -34,6 +34,8 @@ const DEPRECATED_ISSUES_PATH: &str = "issues";
 const ITEMS_PATH: &str = "items";
 /// Repository's modules path
 const MODULES_PATH: &str = "modules";
+/// Repository's collections path
+const COLLECTIONS_PATH: &str = "collections";
 
 
 /// Repository is the container for all SIT artifacts
@@ -52,6 +54,9 @@ pub struct Repository {
     /// Path to items. Mainly to avoid creating this path
     /// on demand for every operation that would require it
     items_path: PathBuf,
+    /// Path to collections. Mainly to avoid creating this path
+    /// on demand for every operation that would require it
+    collections_path: PathBuf,
     /// Configuration
     config: Config,
 }
@@ -108,6 +113,8 @@ pub enum Error {
     SerializationError(serde_json::Error),
     /// Base decoding error
     BaseDecodeError(::data_encoding::DecodeError),
+    /// Attempt to access files outside of allowed path
+    OutsideOfAllowedPath(::std::path::StripPrefixError),
 }
 
 #[allow(unused_variables,dead_code)]
@@ -163,12 +170,14 @@ impl Repository {
             items_path.push(ITEMS_PATH);
             fs::create_dir_all(&items_path)?;
             let modules_path = path.join(MODULES_PATH);
+            let collections_path = path.join(COLLECTIONS_PATH);
             let repo = Repository {
                 path,
                 config_path,
                 items_path,
                 config,
                 modules_path,
+                collections_path,
             };
             repo.save()?;
             Ok(repo)
@@ -220,12 +229,14 @@ impl Repository {
         if config.version != VERSION {
             return Err(Error::InvalidVersion { expected: String::from(VERSION), got: config.version });
         }
+        let collections_path = path.join(COLLECTIONS_PATH);
         let repository = Repository {
             path,
             config_path,
             items_path,
             config,
             modules_path,
+            collections_path,
         };
         Ok(repository)
     }
@@ -289,47 +300,6 @@ impl Repository {
         &self.config
     }
 
-    /// Returns an unordered (as in "order not defined") item iterator
-    pub fn item_iter(&self) -> Result<ItemIter, Error> {
-        Ok(ItemIter { repository: self, dir: fs::read_dir(&self.items_path)? })
-    }
-
-    /// Creates and returns a new item with a unique ID
-    pub fn new_item(&self) -> Result<Item, Error> {
-        self.new_named_item(self.config.id_generator.generate())
-    }
-
-    /// Creates and returns a new item with a specific name. Will fail
-    /// if there's an item with the same name.
-    pub fn new_named_item<S: Into<String>>(&self, name: S) -> Result<Item, Error> {
-        let id: String = name.into();
-        let mut path = self.items_path.clone();
-        path.push(&id);
-        fs::create_dir(path)?;
-        let id = OsString::from(id);
-        Ok(Item {
-            repository: self,
-            id,
-        })
-    }
-
-    /// Finds an item by name (if there is one)
-    pub fn item<S: AsRef<str>>(&self, name: S) -> Option<Item> {
-        let path = self.items_path().join(name.as_ref());
-        if path.is_dir() && path.strip_prefix(self.items_path()).is_ok() {
-            let mut test = path.clone();
-            test.pop();
-            if test != self.items_path() {
-                return None;
-            }
-            let id = path.file_name().unwrap().to_os_string();
-            let item = Item { repository: self, id };
-            Some(item)
-        } else {
-            None
-        }
-    }
-
     /// Returns path to modules. The target directory may not exist.
     pub fn modules_path(&self) -> &Path {
         &self.modules_path
@@ -362,13 +332,118 @@ impl Repository {
                }
             })))
     }
+
+    /// Returns a named collection
+    ///
+    /// These collections exist in addition to the default collection represented
+    /// by the Repository itself.
+    ///
+    /// Will create one if it doesn't exist
+    pub fn collection<S: AsRef<str>>(&self, name: S) -> Result<Collection, Error> {
+        let path = self.collections_path.join(name.as_ref());
+        fs::create_dir_all(&path)?;
+        Ok(Collection {
+            repository: self,
+            path,
+        })
+    }
+
+    /// Returns path to collections
+    pub fn collections_path(&self) -> &Path {
+        self.collections_path.as_path()
+    }
+
 }
+
 
 impl PartialEq for Repository {
     fn eq(&self, rhs: &Repository) -> bool {
         (self as *const Repository) == (rhs as *const Repository)
     }
 }
+
+use super::Collection as CollectionTrait;
+
+#[derive(Debug)]
+pub struct Collection<'a> {
+    repository: &'a Repository,
+    path: PathBuf,
+}
+
+fn new_named_item<'a, S: AsRef<str>, P: AsRef<Path>>(repository: &'a Repository, path: P, name: S) -> Result<Item<'a>, Error> {
+    let path = path.as_ref().join(name.as_ref());
+    fs::create_dir(&path)?;
+    let id = OsString::from(path.file_name().unwrap().to_os_string());
+    Ok(Item {
+        repository,
+        id,
+    })
+}
+
+fn item<'a, S: AsRef<str>, P: AsRef<Path>>(repository: &'a Repository, path: P, name: S) -> Option<Item<'a>> {
+    let path_ = path.as_ref().join(name.as_ref());
+    if path_.is_dir() && path_.strip_prefix(path.as_ref()).is_ok() {
+        let mut test = path_.clone();
+        test.pop();
+        if test != path.as_ref() {
+            return None;
+        }
+        let id = path_.file_name().unwrap().to_os_string();
+        let item = Item { repository, id };
+        Some(item)
+    } else {
+        None
+    }
+}
+
+impl<'a> CollectionTrait for &'a Collection<'a> {
+
+    type Item = Item<'a>;
+    type Error = Error;
+    type ItemIter = ItemIter<'a>;
+
+    fn item_iter(self) -> Result<Self::ItemIter, Self::Error> {
+        Ok(ItemIter { repository: self.repository, dir: fs::read_dir(&self.path)? })
+    }
+
+    fn new_item(self) -> Result<Self::Item, Self::Error> {
+        self.new_named_item(self.repository.config.id_generator.generate())
+    }
+
+    fn new_named_item<S: AsRef<str>>(self, name: S) -> Result<Self::Item, Self::Error> {
+        new_named_item(self.repository, &self.path, name)
+    }
+
+    fn item<S: AsRef<str>>(self, name: S) -> Option<Self::Item> {
+        item(self.repository, &self.path, name)
+    }
+
+}
+
+impl<'a> CollectionTrait for &'a Repository {
+
+    type Item = Item<'a>;
+    type Error = Error;
+    type ItemIter = ItemIter<'a>;
+
+    fn item_iter(self) -> Result<Self::ItemIter, Self::Error> {
+        Ok(ItemIter { repository: self, dir: fs::read_dir(&self.items_path)? })
+    }
+
+    fn new_item(self) -> Result<Self::Item, Self::Error> {
+        self.new_named_item(self.config.id_generator.generate())
+    }
+
+    fn new_named_item<S: AsRef<str>>(self, name: S) -> Result<Self::Item, Self::Error> {
+        new_named_item(self, self.items_path(), name)
+    }
+
+    fn item<S: AsRef<str>>(self, name: S) -> Option<Self::Item> {
+        item(self, self.items_path(), name)
+    }
+
+}
+
 
 use super::Item as ItemTrait;
 
@@ -1203,6 +1278,25 @@ mod tests {
 
         assert_eq!(::dunce::canonicalize(iter.next().unwrap()).unwrap(), ::dunce::canonicalize(tmp.join("module1")).unwrap());
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn collection() {
+        let mut tmp = TempDir::new("sit").unwrap().into_path();
+        tmp.push(".sit");
+
+        let repo = Repository::new(&tmp).unwrap();
+        let coll = repo.collection("test").unwrap();
+
+        let item = coll.new_item().unwrap();
+        // load items
+        let mut items: Vec<Item> = coll.item_iter().unwrap().collect();
+        assert_eq!(items.len(), 1);
+        // check equality of the item's ID
+        assert_eq!(items.pop().unwrap().id(), item.id());
+
+        // the default collection should be empty
+        assert!(repo.item_iter().unwrap().next().is_none());
     }
 
 

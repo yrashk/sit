@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use sit_core::{self, Repository, item::ItemReduction, cfg::Configuration};
+use sit_core::{self, Repository, Collection, item::ItemReduction, cfg::Configuration};
 use serde_json;
 use rayon::prelude::*;
 use super::get_named_expression;

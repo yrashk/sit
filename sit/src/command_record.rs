@@ -1,5 +1,5 @@
 use clap::{self, ArgMatches};
-use sit_core::{Repository, Record};
+use sit_core::{Repository, Record, Collection};
 use sit_core::cfg::{self, Configuration};
 use chrono::prelude::*;
 use std::process::exit;

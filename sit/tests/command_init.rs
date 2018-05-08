@@ -2,7 +2,7 @@ extern crate cli_test_dir;
 extern crate sit_core;
 
 use cli_test_dir::*;
-use sit_core::Repository;
+use sit_core::{Repository, Collection};
 use std::fs;
 
 /// Should initialize a repository

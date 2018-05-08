@@ -5,7 +5,7 @@ extern crate chrono;
 extern crate which;
 
 use cli_test_dir::*;
-use sit_core::{Repository, Item, record::RecordExt};
+use sit_core::{Repository, Item, Collection, record::RecordExt};
 use std::process;
 
 /// Should derive authorship from the config file

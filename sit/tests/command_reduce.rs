@@ -2,7 +2,7 @@ extern crate cli_test_dir;
 extern crate sit_core;
 extern crate serde_json;
 
-use sit_core::{Repository, Item};
+use sit_core::{Repository, Item, Collection};
 
 use cli_test_dir::*;
 

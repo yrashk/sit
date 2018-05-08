@@ -511,6 +511,7 @@ mod tests {
     use super::*;
     use ::Repository;
     use item::{Item, ItemReduction};
+    use Collection;
 
     #[test]
     fn undefined_result() {

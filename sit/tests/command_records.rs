@@ -5,7 +5,7 @@ extern crate remove_dir_all;
 
 use std::process;
 
-use sit_core::{Repository, Item};
+use sit_core::{Repository, Item, Collection};
 
 use cli_test_dir::*;
 use remove_dir_all::*;
