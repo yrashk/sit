@@ -119,8 +119,8 @@ struct Config {
     readonly: bool,
 }
 
-pub fn start<A: ToSocketAddrs>(addr: A, config: sit_core::cfg::Configuration, repo: Repository, readonly: bool, overlays: Vec<&str>) {
-    let mut overlays: Vec<_> = overlays.iter().map(|o| PathBuf::from(o)).collect();
+pub fn start<A: ToSocketAddrs, S: AsRef<str>>(addr: A, config: sit_core::cfg::Configuration, repo: Repository, readonly: bool, overlays: Vec<S>) {
+    let mut overlays: Vec<_> = overlays.iter().map(|o| PathBuf::from(o.as_ref())).collect();
     let assets: PathBuf = repo.path().join("web").into();
     overlays.push(assets);
     for module_name in repo.module_iter().unwrap() {

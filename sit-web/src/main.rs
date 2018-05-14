@@ -39,6 +39,7 @@ extern crate mime_guess;
 mod webapp;
 
 extern crate which;
+extern crate web_view;
 
 use std::ffi::OsString;
 use which::which;
@@ -90,6 +91,9 @@ fn main() {
         .arg(Arg::with_name("listen")
             .default_value("127.0.0.1:8080")
             .help("Listen on IP:PORT"))
+        .arg(Arg::with_name("view")
+                 .long("view")
+                 .help("Open a Web View"))
         .get_matches();
 
 
@@ -127,9 +131,23 @@ fn main() {
     let repo = sit_core::Repository::open(&repo_path)
         .expect("can't open repository");
 
-    let listen = matches.value_of("listen").unwrap();
+    let listen = matches.value_of_lossy("listen").unwrap().into_owned();
     let readonly = matches.is_present("readonly");
-    let overlays: Vec<_> = matches.values_of("overlay").unwrap_or(clap::Values::default()).collect();
+    let overlays: Vec<_> = matches.values_of_lossy("overlay").unwrap_or(vec![]);
+
     println!("Serving on {}", listen);
-    webapp::start(listen, config, repo, readonly, overlays);
+
+    use std::thread;
+    let server = thread::spawn(move || webapp::start(listen, config, repo, readonly, overlays));
+
+    if matches.is_present("view") {
+        let init_cb = |_webview| {};
+        let frontend_cb = |_webview: &mut _, _arg: &_, _userdata: &mut _| {};
+        let userdata = ();
+        web_view::run("SIT", web_view::Content::Url(format!("http://{}", matches.value_of("listen").unwrap())),
+                      Some((1024, 768)), true, false,  init_cb, frontend_cb, userdata);
+    } else {
+        server.join().expect("failed to wait for the server thread");
+    }
+
 }
