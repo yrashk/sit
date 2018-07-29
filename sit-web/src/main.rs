@@ -47,6 +47,22 @@ use sit::ScriptModule;
 
 extern crate thread_local;
 
+#[cfg(feature = "password-protection")]
+extern crate ed25519_dalek;
+#[cfg(feature = "password-protection")]
+extern crate ring;
+#[cfg(feature = "password-protection")]
+extern crate ring_pwhash;
+#[cfg(feature = "password-protection")]
+extern crate data_encoding;
+#[cfg(feature = "password-protection")]
+extern crate byteorder;
+#[cfg(feature = "password-protection")]
+extern crate sha2;
+#[cfg(feature = "password-protection")]
+extern crate qwerty;
+
+
 pub fn gnupg(config: &cfg::Configuration) -> Result<OsString, which::Error> {
     let program = match config.signing.gnupg {
             Some(ref command) => command.clone().into(),
@@ -128,7 +144,6 @@ fn main() {
     let listen = matches.value_of("listen").unwrap();
     let readonly = matches.is_present("readonly");
     let overlays: Vec<_> = matches.values_of("overlay").unwrap_or(clap::Values::default()).collect();
-    println!("Serving on {}", listen);
     match repo.config().clone().extra().get("module_manager") {
             Some(serde_json::Value::String(name)) => {
                 let original_repo = repo.clone();

@@ -122,8 +122,185 @@ struct Config {
     readonly: bool,
 }
 
+#[cfg(feature = "password-protection")]
+fn scrypt_string(log_n: u8, r: u32, p: u32, salt: &[u8], dk: &[u8]) -> String {
+    let mut result = "$rscrypt$".to_string();
+    use data_encoding::BASE64;
+    use byteorder::{ByteOrder, LittleEndian};
+    if r < 256 && p < 256 {
+        result.push_str("0$");
+        let mut tmp = [0u8; 3];
+        tmp[0] = log_n;
+        tmp[1] = r as u8;
+        tmp[2] = p as u8;
+        result.push_str(&BASE64.encode(&tmp));
+    } else {
+        result.push_str("1$");
+        let mut tmp = [0u8; 9];
+        tmp[0] = log_n;
+        LittleEndian::write_u32(&mut tmp[1..5], r);
+        LittleEndian::write_u32(&mut tmp[5..9], p);
+        result.push_str(&BASE64.encode(&tmp));
+    }
+    result.push('$');
+    result.push_str(&BASE64.encode(&salt));
+    result.push('$');
+    result.push_str(&BASE64.encode(&dk));
+    result.push('$');
+
+    result
+}
+#[cfg(feature = "password-protection")]
+fn scrypt_check(password: &str, hashed_value: &str) -> Result<(bool, Vec<u8>), &'static str> {
+    fn read_u32v_le(dst: &mut[u32], input: &[u8]) {
+        use std::{ptr, mem};
+        assert_eq!(dst.len() * 4, input.len());
+        unsafe {
+            let mut x: *mut u32 = dst.get_unchecked_mut(0);
+            let mut y: *const u8 = input.get_unchecked(0);
+            for _ in 0..dst.len() {
+                let mut tmp: u32 = mem::uninitialized();
+                ptr::copy_nonoverlapping(y, &mut tmp as *mut _ as *mut u8, 4);
+                *x = u32::from_le(tmp);
+                x = x.offset(1);
+                y = y.offset(4);
+            }
+        }
+    }
+
+    use data_encoding::BASE64;
+    use byteorder::{ByteOrder, LittleEndian};
+    use ring_pwhash::scrypt::{scrypt, ScryptParams};
+    static ERR_STR: &'static str = "Hash is not in Rust Scrypt format.";
+
+    let mut iter = hashed_value.split('$');
+
+    // Check that there are no characters before the first "$"
+    match iter.next() {
+        Some(x) if x == "" => (),
+        _ => return Err(ERR_STR),
+    }
+
+    // Check the name
+    match iter.next() {
+        Some(t) if t == "rscrypt" => (),
+        _ => return Err(ERR_STR),
+    }
+
+    // Parse format - currenlty only version 0 (compact) and 1 (expanded) are supported
+    let fstr = match iter.next() {
+        Some(fstr) => fstr,
+        None => return Err(ERR_STR),
+    };
+
+    // Parse the parameters - the size of them depends on the if we are using the compact or
+    // expanded format
+    let pvec = match iter.next() {
+        Some(pstr) => match BASE64.decode(pstr.as_bytes()) {
+            Ok(x) => x,
+            Err(_) => return Err(ERR_STR)
+        },
+        None => return Err(ERR_STR)
+    };
+
+    let params = match fstr {
+        "0" => {
+            if pvec.len() != 3 { return Err(ERR_STR); }
+            let log_n = pvec[0];
+            let r = pvec[1] as u32;
+            let p = pvec[2] as u32;
+            ScryptParams::new(log_n, r, p)
+        }
+        "1" => {
+            if pvec.len() != 9 { return Err(ERR_STR); }
+            let log_n = pvec[0];
+            let mut pval = [0u32; 2];
+            read_u32v_le(&mut pval, &pvec[1..9]);
+            ScryptParams::new(log_n, pval[0], pval[1])
+        }
+        _ => return Err(ERR_STR)
+    };
+
+    // Salt
+    let salt = match iter.next() {
+        Some(sstr) => match BASE64.decode(sstr.as_bytes()) {
+            Ok(salt) => salt,
+            Err(_) => return Err(ERR_STR)
+        },
+        None => return Err(ERR_STR)
+    };
+
+    // Hashed value
+    let hash = match iter.next() {
+        Some(hstr) => match BASE64.decode(hstr.as_bytes()) {
+            Ok(hash) => hash,
+            Err(_) => return Err(ERR_STR)
+        },
+        None => return Err(ERR_STR)
+    };
+
+    // Make sure that the input ends with a "$"
+    match iter.next() {
+        Some(x) if x == "" => (),
+        _ => return Err(ERR_STR)
+    }
+
+    // Make sure there is no trailing data after the final "$"
+    if iter.next().is_some() {
+        return Err(ERR_STR);
+    }
+
+    let mut output = vec![0u8; hash.len() * 2];
+    scrypt(password.as_bytes(), &*salt, &params, &mut output);
+
+    Ok((::ring::constant_time::verify_slices_are_equal(&output[0..hash.len()], &hash).is_ok(), output))
+}
+
+
+
 pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_core::cfg::Configuration, repo: Repository<MI>, readonly: bool, overlays: Vec<&str>)
     where MI: sit_core::repository::ModuleIterator<PathBuf, sit_core::repository::Error> {
+    let _prefix: String = "".into();
+    #[cfg(feature = "password-protection")]
+    let (_prefix, hashed, scrypt_params, public) = {
+        println!("Generating new password");
+//        use std::collections::HashMap;
+        use qwerty::{Qwerty, Distribution};
+        let password = Qwerty::new(Distribution::Alphanumeric, 16).generate();
+//        let default_config = serde_json::Value::Object(HashMap::new());
+//        let web_config = config.extra.get("sit-web").unwrap_or(&default_config);
+        use ed25519_dalek::{Keypair, SecretKey, PublicKey, Signature};
+        use ring::rand::{SystemRandom, SecureRandom};
+        use ring_pwhash::scrypt::{scrypt, scrypt_check, ScryptParams};
+        use sha2;
+
+        let log_n = 10u8;
+        let r = 8u32;
+        let p = 16u32;
+
+        let params = ScryptParams::new(log_n, r, p);
+        let rng = SystemRandom::new();
+        // 128-bit random salt
+        let mut salt = [0u8; 16];
+        rng.fill(&mut salt).unwrap();
+        // 512-bit derived key
+        let mut dk = [0u8; 64];
+        scrypt(password.as_bytes(), &salt, &params, &mut dk);
+
+        let result = scrypt_string(log_n, r, p, &salt, &dk[0..32]);
+
+        let secret = SecretKey::from_bytes(&dk[32..]).unwrap();
+        let public = PublicKey::from_secret::<sha2::Sha512>(&secret);
+
+        let prefix = format!("sit:{}@", password);
+        (prefix, result, params, public)
+    };
+
+    println!("Serving on:");
+    for a in addr.to_socket_addrs().unwrap() {
+       println!("    http://{}{}", _prefix, a);
+    }
+
     let mut overlays: Vec<_> = overlays.iter().map(|o| PathBuf::from(o)).collect();
     let assets: PathBuf = repo.path().join("web").into();
     overlays.push(assets);
@@ -146,8 +323,44 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
     let repo_config = Config {
       readonly,
     };
-    start_server(addr, move |request|
-        router!(request,
+    start_server(addr, move |request| {
+        #[cfg(feature = "password-protection")]
+        let signature = {
+            use rouille::input;
+            use ed25519_dalek::Signature;
+            use data_encoding::BASE64URL;
+            use sha2;
+            let mut cookies = input::cookies(&request);
+            loop {
+                if let Some((_, val)) = cookies.find(|&(n, _)| n == "sit-auth") {
+                    use sha2;
+                    let signature = Signature::from_bytes(&BASE64URL.decode(val.as_bytes()).unwrap_or(vec![])).unwrap();
+                    if public.verify::<sha2::Sha512>(b"This is a correct password",
+                                                     &signature).is_ok() {
+                        break signature
+                    }
+                }
+                println!("has auth?");
+                let auth = match input::basic_http_auth(request) {
+                    Some(a) => a,
+                    None => return Response::basic_http_auth_login_required("sit")
+                };
+                println!("auth {}", auth.password);
+                let result = scrypt_check(&auth.password, &hashed).unwrap_or((false, vec![]));
+                if !result.0 {
+                    return Response::basic_http_auth_login_required("sit")
+                }
+
+                use ed25519_dalek::{Keypair, SecretKey, PublicKey, Signature};
+                let secret = SecretKey::from_bytes(&result.1[32..]).unwrap();
+                let public = PublicKey::from_secret::<sha2::Sha512>(&secret);
+                let keypair = Keypair { secret, public };
+
+                break keypair.sign::<sha2::Sha512>(b"This is a correct password")
+            }
+        };
+
+        let response = router!(request,
         (GET) (/user/config) => {
           Response::json(&config)
         },
@@ -388,7 +601,16 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
            response.with_etag(request, hash)
         }
       }
-      ))
+      );
+
+        #[cfg(not(feature = "password-protection"))] {
+            response
+        }
+        #[cfg(feature = "password-protection")] {
+            use data_encoding::BASE64URL;
+            response.with_additional_header("Set-Cookie",format!("sit-auth={}; path=/", BASE64URL.encode(&signature.to_bytes())))
+        }
+    })
 
 }
 
