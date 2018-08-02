@@ -64,7 +64,8 @@ use std::path::PathBuf;
 use std::fs;
 use std::net::ToSocketAddrs;
 
-use sit_core::{Repository, reducers::duktape::DuktapeReducer, record::OrderedFiles, path::HasPath};
+use sit_core::{Repository, reducers::duktape::DuktapeReducer, record::OrderedFiles, record::RecordContainer,
+               record::RecordOwningContainer, path::HasPath};
 use std::io::Cursor;
 
 use mime_guess::get_mime_type_str;
@@ -155,11 +156,12 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
            Response::json(&repo_config)
         },
         (GET) (/api/items/{filter_expr: String}/{query_expr: String}) => {
+        #[cfg(feature = "v1items")] {
             use jmespath;
-            use sit_core::item::ItemReduction;
+            use sit_core::record::RecordContainerReduction;
             let items: Vec<_> = repo.item_iter().expect("can't list items").collect();
             let mut reducer = Arc::new(Mutex::new(sit_core::reducers::duktape::DuktapeReducer::new(&repo).unwrap()));
-            let tl_reducer: ThreadLocal<RefCell<DuktapeReducer<sit_core::repository::Record<MI>, MI>>> = ThreadLocal::new();
+            let tl_reducer: ThreadLocal<RefCell<DuktapeReducer<sit_core::repository::Record, MI>>> = ThreadLocal::new();
 
             let filter_defined = filter_expr != "";
             let filter = if filter_defined {
@@ -197,10 +199,15 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
                   })
                  .filter(Option::is_some).collect();
             Response::json(&result)
+          }
+        #[cfg(not(feature = "v1items"))] {
+             Response::not_found()
+        }
         },
         (GET) (/api/item/{id: String}/{query_expr: String}) => {
+        #[cfg(feature = "v1items")] {
             use jmespath;
-            use sit_core::item::ItemReduction;
+            use sit_core::record::RecordContainerReduction;
             use sit_core::Item;
             let mut reducer = sit_core::reducers::duktape::DuktapeReducer::new(&repo).unwrap();
             let query = match jmespath::compile(&query_expr) {
@@ -215,8 +222,13 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
             let data = jmespath::Variable::from(serde_json::Value::Object(reduced));
             let result = query.search(&data).unwrap();
             Response::json(&result)
+        }
+        #[cfg(not(feature = "v1items"))] {
+             Response::not_found()
+        }
         },
         (GET) (/api/item/{id: String}/{record: String}/files) => {
+        #[cfg(feature = "v1items")] {
             use sit_core::{Record, Item};
             let item = match repo.item_iter().unwrap().find(|i| i.id() == id) {
                 Some(item) => item,
@@ -228,14 +240,24 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
             };
             let files: Vec<_> = record.file_iter().map(|(name, _)| name).collect();
             Response::json(&files)
+        }
+        #[cfg(not(feature = "v1items"))] {
+             Response::not_found()
+        }
         },
         (POST) (/api/item) => {
+        #[cfg(feature = "v1items")] {
            if readonly { return Response::empty_404(); }
            use sit_core::Item;
            let item = repo.new_item().expect("can't create item");
            Response::json(&item.id())
+        }
+        #[cfg(not(feature = "v1items"))] {
+             Response::not_found()
+        }
         },
         (POST) (/api/item/{id: String}/records) => {
+        #[cfg(feature = "v1items")] {
            if readonly { return Response::empty_404(); }
            use sit_core::{Item, Record};
            let mut item = match repo.item_iter().unwrap().find(|i| i.id() == id) {
@@ -330,6 +352,10 @@ pub fn start<A: ToSocketAddrs, MI: 'static + Send + Sync>(addr: A, config: sit_c
           }
 
           Response::json(&record.encoded_hash())
+        }
+        #[cfg(not(feature = "v1items"))] {
+             Response::not_found()
+        }
         },
         _ => {
         // Serve repository content

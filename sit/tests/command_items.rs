@@ -1,7 +1,7 @@
 extern crate cli_test_dir;
 extern crate sit_core;
 
-use sit_core::{Repository, Item};
+use sit_core::{Repository, record::RecordOwningContainer};
 
 use cli_test_dir::*;
 

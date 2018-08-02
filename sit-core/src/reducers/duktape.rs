@@ -358,7 +358,7 @@ impl<'a, R: Record, MI: 'a> Clone for DuktapeReducer<'a, R, MI> {
 }
 
 
-impl<'a, R: Record, MI: 'a> Reducer for DuktapeReducer<'a, R, MI> {
+impl<'a, R: Record + HasPath, MI: 'a> Reducer for DuktapeReducer<'a, R, MI> {
     type State = Map<String, JsonValue>;
     type Item = R;
 
@@ -396,10 +396,7 @@ impl<'a, R: Record, MI: 'a> Reducer for DuktapeReducer<'a, R, MI> {
                     #[cfg(not(windows))]
                     let name = name.as_ref();
 
-                    let path = self.repository.items_path()
-                        .join(item.item_id().as_ref())
-                        .join(item.encoded_hash().as_ref())
-                        .join(name);
+                    let path = item.path().join(name);
 
                     if fs::metadata(&path).unwrap().len() == 0 {
                         // if the file is empty, it can't be mmapped
@@ -517,7 +514,7 @@ mod tests {
     use tempdir::TempDir;
     use super::*;
     use ::Repository;
-    use item::{Item, ItemReduction};
+    use record::{RecordOwningContainer, RecordContainerReduction};
     use path::HasPath;
 
     #[test]
@@ -533,9 +530,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/1.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {test: true} }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let _record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let _record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("test").unwrap(), &JsonValue::Bool(true));
     }
@@ -551,11 +547,10 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return 1 }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let _record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let _record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
-            assert!(state.get("errors").is_some());
+        assert!(state.get("errors").is_some());
         let errors = state.get("errors").unwrap().as_array().unwrap();
         assert_eq!(errors[0].as_object().unwrap().get("error").unwrap(), &JsonValue::String("TypeError: invalid return value 1, expected an object".into()));
         assert_eq!(errors[0].as_object().unwrap().get("file").unwrap(), &JsonValue::String(repo.path().join("reducers").join("reducer.js").to_str().unwrap().into()));
@@ -573,9 +568,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {\"hello\": record.hash}; }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String(record.encoded_hash()));
     }
@@ -591,9 +585,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {\"hello\": new TextDecoder('utf-8').decode(record.files.text)}; }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String("Title".into()));
     }
@@ -617,14 +610,12 @@ mod tests {
          return {\"hello\": this.counter}; \
          }").unwrap();
 
-        let item = repo.new_item().unwrap();
+        // create three records
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
 
-        // create two records
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         use serde_json::Number;
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(3)));
@@ -643,9 +634,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer2.js")).unwrap();
         f.write(b"module.exports = function(state) { return Object.assign({\"bye\": 2}, state); }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         use serde_json::Number;
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(1)));
@@ -666,9 +656,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("modules/test/reducers/reducer2.js")).unwrap();
         f.write(b"module.exports = function(state) { return Object.assign({\"bye\": 2}, state); }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         use serde_json::Number;
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(1)));
@@ -686,7 +675,7 @@ mod tests {
         fs::create_dir_all(repo.path().join("reducers")).unwrap();
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"module.exports = 'hello'").unwrap();
-        let res = DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
+        let res = DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
         assert!(res.is_err());
         let reducer_file = repo.path().join("reducers/reducer.js");
         let err = res.unwrap_err();
@@ -712,9 +701,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer1.js")).unwrap();
         f.write(b"module.exports = function(state) { return Object.assign({\"hello\": module.exports.data}, state); }; module.exports.data = 1;").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         use serde_json::Number;
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(1)));
@@ -731,9 +719,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer1.js")).unwrap();
         f.write(b"var a = 1; module.exports = function(state) { return Object.assign({\"hello\": a}, state); };").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         use serde_json::Number;
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(1)));
@@ -750,7 +737,7 @@ mod tests {
         fs::create_dir_all(repo.path().join("reducers")).unwrap();
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"function(state) { return state }").unwrap();
-        let res = DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
+        let res = DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
         assert!(res.is_err());
         let reducer_file = repo.path().join("reducers/reducer.js");
         let err = res.unwrap_err();
@@ -775,7 +762,7 @@ mod tests {
         fs::create_dir_all(repo.path().join("reducers")).unwrap();
         let mut f = fs::File::create(repo.path().join("reducers/reducer.js")).unwrap();
         f.write(b"module.exports = function(state) { return Object.assign{\"hello\": 1}, state); }").unwrap();
-        let res = DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
+        let res = DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo);
         assert!(res.is_err());
         let reducer_file = repo.path().join("reducers/reducer.js");
         let err = res.unwrap_err();
@@ -801,9 +788,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers").join("reducer.js")).unwrap();
         f.write(b"module.exports = function(state) { return Object.assign({\"hello\": record.a}, state); }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert!(state.get("errors").is_some());
         let errors = state.get("errors").unwrap().as_array().unwrap();
@@ -829,28 +815,26 @@ mod tests {
          return {\"hello\": this.counter}; \
          }").unwrap();
 
-        let item = repo.new_item().unwrap();
-
-        // create two records
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        // create three records
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
 
         let mut reducer = DuktapeReducer::new(&repo).unwrap();
 
         use serde_json::Number;
 
-        let state = item.reduce_with_reducer(&mut reducer).unwrap();
+        let state = repo.reduce_with_reducer(&mut reducer).unwrap();
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(3)));
 
         // run it again without touching the state
-        let state = item.reduce_with_reducer(&mut reducer).unwrap();
+        let state = repo.reduce_with_reducer(&mut reducer).unwrap();
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(6)));
 
         // now, reset state
         reducer.reset_state();
 
-        let state = item.reduce_with_reducer(&mut reducer).unwrap();
+        let state = repo.reduce_with_reducer(&mut reducer).unwrap();
         assert_eq!(state.get("hello").unwrap(), &JsonValue::Number(Number::from(3)));
     }
 
@@ -874,20 +858,15 @@ mod tests {
          return {\"hello\": this.counter}; \
          };").unwrap();
 
-        let item1 = repo.new_item().unwrap();
-        item1.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-
-        let item2 = repo.new_item().unwrap();
-        item2.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        item2.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title 1"[..])].into_iter(), true).unwrap();
-
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
 
         let reducer = DuktapeReducer::new(&repo).unwrap();
         let mut reducer1 = reducer.clone();
         let mut reducer2 = reducer.clone();
 
-        let state1 = item1.reduce_with_reducer(&mut reducer1).unwrap();
-        let state2 = item2.reduce_with_reducer(&mut reducer2).unwrap();
+        let state1 = repo.reduce_with_reducer(&mut reducer1).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title 1"[..])].into_iter(), true).unwrap();
+        let state2 = repo.reduce_with_reducer(&mut reducer2).unwrap();
 
         use serde_json::Number;
         assert_eq!(state1.get("hello").unwrap(), &JsonValue::Number(Number::from(1)));
@@ -895,8 +874,8 @@ mod tests {
 
         // Now, make sure state gets copied from where it is, and not the original value:
         let mut reducer3 = reducer2.clone();
-        let state3 = item1.reduce_with_reducer(&mut reducer3).unwrap();
-        assert_eq!(state3.get("hello").unwrap(), &JsonValue::Number(Number::from(3)));
+        let state3 = repo.reduce_with_reducer(&mut reducer3).unwrap();
+        assert_eq!(state3.get("hello").unwrap(), &JsonValue::Number(Number::from(4)));
     }
 
 
@@ -916,9 +895,8 @@ mod tests {
             return Object.assign(state, {hello: new TextDecoder('utf-8').decode(record.files.text)});
         }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &"🙂😵😾🤔".as_bytes()[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &"🙂😵😾🤔".as_bytes()[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String("🙂😵😾🤔".into()));
     }
@@ -959,12 +937,11 @@ mod tests {
           return state;
         }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        item.new_record(vec![(".type/DetailsChanged", &b""[..]), ("text", &"🙂😵😾🤔   ".as_bytes()[..])].into_iter(), true).unwrap();
-        item.new_record(vec![(".type/Commented", &b""[..]), ("text", &"test🙂😵".as_bytes()[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/DetailsChanged", &b""[..]), ("text", &"🙂😵😾🤔   ".as_bytes()[..])].into_iter(), true).unwrap();
+        repo.new_record(vec![(".type/Commented", &b""[..]), ("text", &"test🙂😵".as_bytes()[..])].into_iter(), true).unwrap();
 
         // SHOULD NOT FAIL
-        item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
     }
 
     #[cfg(feature = "duktape-require")]
@@ -981,9 +958,8 @@ mod tests {
         let mut f = fs::File::create(repo.path().join("reducers/reducer/index.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {\"hello\": record.hash}; }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String(record.encoded_hash()));
     }
@@ -1004,7 +980,7 @@ mod tests {
 
         let err_str = "Error: module not found: \"index.js\"";
 
-        assert_matches!(DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
+        assert_matches!(DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
         Err(Error::ExecutionError { ref error }) if error == err_str);
     }
 
@@ -1022,7 +998,7 @@ mod tests {
         f.write(b"module.exports = require(\"reducer/index.js\");").unwrap();
 
         let err_str = "Error: module not found: \"reducer/index.js\"";
-        assert_matches!(DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
+        assert_matches!(DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
         Err(Error::ExecutionError { ref error }) if error == err_str);
     }
 
@@ -1044,7 +1020,7 @@ mod tests {
 
         let err_str = "TypeError: cannot resolve module id: ../reducer.js";
 
-        assert_matches!(DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
+        assert_matches!(DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
         Err(Error::ExecutionError { ref error }) if error == err_str);
     }
 
@@ -1061,7 +1037,7 @@ mod tests {
         f.write(b"module.exports = require(\"/reducer.js\");").unwrap();
 
         let err_str = "TypeError: cannot resolve module id: /reducer.js";
-        assert_matches!(DuktapeReducer::<::repository::Record<::repository::ModuleDirectory<PathBuf>>, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
+        assert_matches!(DuktapeReducer::<::repository::Record, ::repository::ModuleDirectory<PathBuf>>::new(&repo),
         Err(Error::ExecutionError { ref error }) if error == err_str);
     }
 
@@ -1079,9 +1055,8 @@ mod tests {
         let mut f = fs::File::create(repo.modules_path().join("test").join("reducers").join("reducer").join("index.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {\"hello\": record.hash}; }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String(record.encoded_hash()));
     }
@@ -1104,9 +1079,8 @@ mod tests {
         let mut f = fs::File::create(module_path.join("reducers").join("reducer").join("index.js")).unwrap();
         f.write(b"module.exports = function(state, record) { return {\"hello\": record.hash}; }").unwrap();
 
-        let item = repo.new_item().unwrap();
-        let record = item.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
-        let state = item.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
+        let record = repo.new_record(vec![(".type/SummaryChanged", &b""[..]), ("text", &b"Title"[..])].into_iter(), true).unwrap();
+        let state = repo.reduce_with_reducer(&mut DuktapeReducer::new(&repo).unwrap()).unwrap();
 
         assert_eq!(state.get("hello").unwrap(), &JsonValue::String(record.encoded_hash()));
     }

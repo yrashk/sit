@@ -1,4 +1,4 @@
-use sit_core::{Item, Record, Repository};
+use sit_core::{Item, Record, Repository, record::RecordContainer};
 use rayon::prelude::*;
 
 pub fn command<MI: Send + Sync>(repo: Repository<MI>) -> i32 {
@@ -7,10 +7,8 @@ pub fn command<MI: Send + Sync>(repo: Repository<MI>) -> i32 {
         .map(|mut item| {
             item.set_integrity_check(false);
             let all_records: Vec<_> = item.record_iter().expect("can't list records").flat_map(|v| v).collect();
-            item.set_integrity_check(true);
-            let checked_records: Vec<_> = item.record_iter().expect("can't list records").flat_map(|v| v).collect();
             let invalid_records: Vec<_> = all_records.into_iter()
-                .filter(|r| !checked_records.iter().any(|r_| r_.hash() == r.hash()))
+                .filter(|r| !r.integrity_intact(repo.config().hashing_algorithm()))
                 .collect();
             let valid = invalid_records.is_empty();
             for record in invalid_records {

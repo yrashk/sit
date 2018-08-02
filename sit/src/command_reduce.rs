@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use sit_core::{self, Repository, item::ItemReduction, cfg::Configuration};
+use sit_core::{self, Repository, record::RecordContainerReduction, cfg::Configuration};
 use serde_json;
 use super::get_named_expression;
 use jmespath;

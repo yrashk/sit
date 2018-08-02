@@ -5,7 +5,7 @@ extern crate remove_dir_all;
 
 use std::process;
 
-use sit_core::{Repository, Item};
+use sit_core::{Repository, record::RecordOwningContainer, path::ResolvePath};
 
 use cli_test_dir::*;
 use remove_dir_all::*;
@@ -294,10 +294,10 @@ fn pgp_signature_wrong_data() {
 
     use std::fs::File;
     use std::io::{Read, Write};
-    let mut f = File::open(dir.path(".sit").join("items").join(id.trim()).join(oldrec.trim()).join(".signature")).unwrap();
+    let mut f = File::open(dir.path(".sit").join("items").join(id.trim()).join(oldrec.trim()).resolve_dir().unwrap().join(".signature")).unwrap();
     let mut s = String::new();
     f.read_to_string(&mut s).unwrap();
-    remove_dir_all(dir.path(".sit").join("items").join(id.trim()).join(oldrec.trim())).unwrap();
+    remove_dir_all(dir.path(".sit").join("items").join(id.trim()).join(oldrec.trim()).resolve_dir().unwrap()).unwrap();
 
     let mut f = File::create(dir.path(".signature")).unwrap();
     f.write(s.as_bytes()).unwrap();

@@ -1,7 +1,8 @@
 //! Record is an immutable collection of files
 
 use std::io::{self, Read};
-use hash::Hasher;
+use hash::{Hasher, HashingAlgorithm};
+use std::path::PathBuf;
 
 /// Record's file
 ///
@@ -240,6 +241,16 @@ mod ordered_files_tests {
     }
 }
 
+/// Returns string split by `length` characters
+pub(crate) fn split_path<S: AsRef<str>>(s: S, length: usize) -> PathBuf {
+    use itertools::Itertools;
+    let mut path = s.as_ref().chars().chunks(length).into_iter()
+        .fold(PathBuf::new(), |acc, chunk| acc.join(chunk.into_iter().collect::<String>()));
+
+    path.pop();
+    path.join(s.as_ref())
+}
+
 /// Record is an immutable collection of files
 pub trait Record {
    /// Implementation's type for reading files
@@ -261,12 +272,56 @@ pub trait Record {
    /// [`hash`]: struct.Record.html#hash
    fn encoded_hash(&self) -> Self::Str;
 
+   /// Returns encoded record hash path split by `length` characters
+   fn split_path(&self, length: usize) -> PathBuf {
+       split_path(self.encoded_hash(), length)
+   }
+
    /// Returns enclosing item's ID
+   #[cfg(feature = "layoutv1-api")]
    fn item_id(&self) -> Self::Str;
 
    /// Returns an iterator over files in the record
    fn file_iter(&self) -> Self::Iter;
+
+   /// Returns true if the integrity of the record is intact
+   fn integrity_intact(&self, hashing_algorithm: &HashingAlgorithm) -> bool {
+       let mut hasher = hashing_algorithm.hasher();
+       let ordered_files = OrderedFiles::from(self.file_iter());
+       match ordered_files.hash(&mut *hasher) {
+           Ok(_) => {
+               let hash = hasher.result_box();
+               self.hash().as_ref() == hash.as_slice()
+           },
+           _ => {
+               false
+           }
+       }
+   }
 }
+
+pub trait RecordContainer {
+    /// Error type used by the implementation
+    type Error: ::std::error::Error + ::std::fmt::Debug;
+    /// Record type used by the implementation
+    type Record : super::Record;
+    /// Type used to list records that can be referenced as a slice of records
+    type Records : IntoIterator<Item=Self::Record>;
+    /// Iterator over lists of records
+    type RecordContainer : Iterator<Item=Self::Records>;
+    /// Iterates through the tree of records
+    fn record_iter(&self) -> Result<Self::RecordContainer, Self::Error>;
+}
+
+pub trait RecordOwningContainer: RecordContainer {
+    /// Creates and returns a new record.
+    ///
+    /// Will reference all dangling records as its parent, unless
+    /// `link_parents` is set to `false`
+    fn new_record<'f, F: File + 'f, I: Into<OrderedFiles<'f, F>>>(&self, files: I, link_parents: bool)
+       -> Result<Self::Record, Self::Error> where F::Read: 'f;
+}
+
 
 
 use serde_json::{Value as JsonValue, Map as JsonMap};
@@ -327,3 +382,33 @@ pub trait RecordExt: Record {
 }
 
 impl<T> RecordExt for T where T: Record {}
+
+use reducers::Reducer;
+#[derive(Debug, Error)]
+pub enum ReductionError<Err: ::std::error::Error + ::std::fmt::Debug> {
+    ImplementationError(Err)
+}
+
+/// Default reduction algorithm
+///
+pub trait RecordContainerReduction: RecordContainer {
+
+    fn initialize_state(&self, state: JsonMap<String, JsonValue>) -> JsonMap<String, JsonValue> {
+        state
+    }
+
+    /// Reduces item with a given [`Reducer`]
+    ///
+    /// Will insert item's `id` into the initial state
+    ///
+    /// [`Reducer`]: ../reducers/trait.Reducer.html
+    fn reduce_with_reducer<R: Reducer<State=JsonMap<String, JsonValue>, Item=Self::Record>>(&self, reducer: &mut R) -> Result<JsonMap<String, JsonValue>, ReductionError<Self::Error>> {
+        let records = self.record_iter()?;
+        let state: JsonMap<String, JsonValue> = Default::default();
+        let state = self.initialize_state(state);
+        Ok(records.fold(state, |acc, recs|
+            recs.into_iter().fold(acc, |acc, rec| reducer.reduce(acc, &rec))))
+    }
+
+}
+

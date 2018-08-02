@@ -37,6 +37,9 @@ extern crate digest;
 
 extern crate relative_path;
 
+extern crate itertools;
+extern crate walkdir;
+
 // Crates necessary for testing
 #[cfg(test)] #[macro_use] extern crate assert_matches;
 #[cfg(test)] #[macro_use] extern crate proptest;
@@ -45,9 +48,12 @@ extern crate relative_path;
 pub mod path;
 pub mod hash;
 pub mod encoding;
+#[cfg(feature = "layoutv1-api")]
 pub mod id;
 pub mod repository;
+#[cfg(feature = "layoutv1-api")]
 pub mod item;
+#[cfg(feature = "layoutv1-api")]
 pub use item::Item;
 pub mod record;
 pub use record::Record;

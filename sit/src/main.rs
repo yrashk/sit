@@ -57,6 +57,7 @@ extern crate thread_local;
 
 #[macro_use] extern crate derive_error;
 extern crate directories;
+extern crate itertools;
 
 use std::collections::HashMap;
 pub fn get_named_expression<S: AsRef<str>, MI>(name: S, repo: &sit_core::Repository<MI>,
@@ -88,6 +89,19 @@ mod module_iter;
 use module_iter::ScriptModule;
 
 use sit_core::path::HasPath;
+
+trait ConditionalChain : Sized {
+    fn conditionally<F: Fn(Self) -> Self>(self, cond: bool, f: F) -> Self {
+        if cond {
+            f(self)
+        } else {
+            self
+        }
+    }
+}
+
+impl<T> ConditionalChain for T where T : Sized {
+}
 
 fn main() {
     exit(main_with_result(true));
@@ -145,7 +159,12 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
             .about("(Re)-populate default files in the repository (such as reducers)"))
         .subcommand(SubCommand::with_name("path")
             .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
-            .about("Prints the path to the repository"))
+            .arg(Arg::with_name("record")
+                .long("record")
+                .short("r")
+                .takes_value(true)
+                .help("Path to the record"))
+            .about("Prints the path to the repository and its individual components"))
         .subcommand(SubCommand::with_name("rebuild")
             .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
             .about("Rebuild a repository")
@@ -172,40 +191,37 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                      .takes_value(true)
                      .required(false)
                      .help("Specify item identifier, otherwise generate automatically")))
-        .subcommand(SubCommand::with_name("items")
-            .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
-            .about("Lists items")
-            .arg(Arg::with_name("filter")
-                     .conflicts_with("named-filter")
-                     .long("filter")
-                     .short("f")
-                     .takes_value(true)
-                     .help("Filter items with a JMESPath query"))
-            .arg(Arg::with_name("query")
-                     .conflicts_with("named-query")
-                     .long("query")
-                     .short("q")
-                     .takes_value(true)
-                     .help("Render a result of a JMESPath query over the item (defaults to `id`)"))
-            .arg(Arg::with_name("named-filter")
-                     .conflicts_with("filter")
-                     .long("named-filter")
-                     .short("F")
-                     .takes_value(true)
-                     .help("Filter items with a named JMESPath query"))
-            .arg(Arg::with_name("named-query")
-                     .conflicts_with("query")
-                     .long("named-query")
-                     .short("Q")
-                     .takes_value(true)
-                     .help("Render a result of a named JMESPath query over the item")))
+        .conditionally(cfg!(feature = "v1items"), |app|
+        app.subcommand(SubCommand::with_name("items")
+               .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
+               .about("Lists items (DEPRECATED)")
+               .arg(Arg::with_name("filter")
+                   .conflicts_with("named-filter")
+                   .long("filter")
+                   .short("f")
+                   .takes_value(true)
+                   .help("Filter items with a JMESPath query"))
+               .arg(Arg::with_name("query")
+                   .conflicts_with("named-query")
+                   .long("query")
+                   .short("q")
+                   .takes_value(true)
+                   .help("Render a result of a JMESPath query over the item (defaults to `id`)"))
+               .arg(Arg::with_name("named-filter")
+                   .conflicts_with("filter")
+                   .long("named-filter")
+                   .short("F")
+                   .takes_value(true)
+                   .help("Filter items with a named JMESPath query"))
+               .arg(Arg::with_name("named-query")
+                   .conflicts_with("query")
+                   .long("named-query")
+                   .short("Q")
+                   .takes_value(true)
+                   .help("Render a result of a named JMESPath query over the item"))))
         .subcommand(SubCommand::with_name("record")
             .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
             .about("Creates a new record")
-            .arg(Arg::with_name("id")
-                     .takes_value(true)
-                     .required(true)
-                     .help("Item identifier"))
             .arg(Arg::with_name("type")
                 .short("t")
                 .long("type")
@@ -236,17 +252,17 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                 .requires("sign")
                 .takes_value(true)
                 .help("Specify gnupg command (`gpg` by default or overridden by config's signing.gnupg)"))
-            .arg(Arg::with_name("FILES")
+            .arg(Arg::with_name(command_record::FILES_ARG)
                      .multiple(true)
                      .takes_value(true)
-                     .help("Collection of files or folders the record will be built from")))
+                     .help(command_record::FILES_ARG_HELP)))
         .subcommand(SubCommand::with_name("records")
             .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
             .about("Lists records")
-            .arg(Arg::with_name("id")
+            .conditionally(cfg!(feature = "v1items"), |app|
+            app.arg(Arg::with_name("id")
                      .takes_value(true)
-                     .required(true)
-                     .help("Item identifier"))
+                     .help("Item identifier (DEPRECATED)")))
             .arg(Arg::with_name("filter")
                      .conflicts_with("named-filter")
                      .long("filter")
@@ -461,7 +477,7 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
             }
 
             if let Some(matches) = matches.subcommand_matches("records") {
-                return command_records::command(matches, &repo, config);
+                return command_records::command(matches, repo, config);
             }
 
             if let Some(matches) = matches.subcommand_matches("reduce") {

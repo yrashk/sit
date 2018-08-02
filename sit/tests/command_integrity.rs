@@ -1,5 +1,7 @@
 extern crate cli_test_dir;
+extern crate sit_core;
 
+use sit_core::path::ResolvePath;
 use cli_test_dir::*;
 
 /// Should list records with failed integrity check
@@ -21,7 +23,7 @@ fn integrity_failure() {
     // at this point, integrity check should not fail
     dir.cmd().arg("integrity").expect_success();
     // now, lets tamper with the record
-    dir.create_file(dir.path(".sit/items").join(id.trim()).join(record.trim()).join("tamper"), "");
+    dir.create_file(dir.path(".sit/items").join(id.trim()).join(record.trim()).resolve_dir().unwrap().join("tamper"), "");
     // now, integrity check should fail
     // (we event set -i/--disable-integrity-check to make sure the command works with integrity check
     //  suppressed from the command line)
@@ -46,7 +48,7 @@ fn integrity_check_flag() {
         .args(&["record", id.trim(), "--no-author", "-t", "Sometype"])
         .expect_success().stdout).unwrap();
     // now, lets tamper with the record
-    dir.create_file(dir.path(".sit/items").join(id.trim()).join(record.trim()).join("tamper"), "");
+    dir.create_file(dir.path(".sit/items").join(id.trim()).join(record.trim()).resolve_dir().unwrap().join("tamper"), "");
     // now, the record should not appear
     let output = String::from_utf8(dir.cmd().args(&["records", id.trim()]).expect_success().stdout).unwrap();
     assert_eq!(output, "");
