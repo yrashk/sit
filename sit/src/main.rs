@@ -22,6 +22,8 @@ mod command_integrity;
 #[cfg(feature="web")]
 mod command_web;
 mod authorship;
+#[cfg(feature="script")]
+mod command_script;
 
 mod cli;
 
@@ -345,6 +347,19 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                 .conflicts_with("help")
                 .help("Arguments to parse"))
             .about("Parses arguments against a specification given on stdin"))
+        .conditionally(cfg!(feature = "script"), |app|
+        app.subcommand(SubCommand::with_name("script")
+            .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
+            .about("Execute a script")
+            .arg(Arg::with_name("language")
+                 .short("l")
+                 .long("language")
+                 .takes_value(true)
+                 .possible_values(&[#[cfg(feature = "lua")] "lua"])
+                 .help("Scripting language. If not specified, guessed from the filename."))
+            .arg(Arg::with_name("FILE")
+                 .required(true)
+                 .help("File with a script to execute"))))
         .conditionally(cfg!(feature = "web"), |app|
         app.subcommand(SubCommand::with_name("web")
             .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
@@ -525,6 +540,15 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                     return command_web::command(repo, web_matches, matches.clone(), config, canonical_working_dir, config_path);
                 }
             }
+
+            #[cfg(any(feature = "lua"))]
+            {
+                if let Some(matches) = matches.subcommand_matches("script") {
+                    return command_script::command(matches);
+                }
+            }
+
+
 
             match command_external::command(&matches, repo, &cwd) {
                 Err(_) => {
