@@ -62,6 +62,7 @@ pub fn execute_cli<MI, E, K, V>(repo: &Repository<MI>, cwd: &Path, subcommand: &
                    },
                    _ => Err(err),
                })?;
+    let attempt_alias = path == env::current_exe().unwrap();
 
     #[cfg(unix)]
     let exact = path.file_name().unwrap() == cmd.as_str();
@@ -78,6 +79,10 @@ pub fn execute_cli<MI, E, K, V>(repo: &Repository<MI>, cwd: &Path, subcommand: &
     };
     command.env("SIT_DIR", repo.path().to_str().unwrap());
     command.env("SIT", env::current_exe().unwrap_or("sit".into()).to_str().unwrap());
+    if attempt_alias {
+        command.env("SIT_SUBCOMMAND", subcommand);
+        command.arg(subcommand);
+    }
     command.args(args);
     if capture_stdout {
         command.stdout(::std::process::Stdio::piped());
@@ -85,5 +90,9 @@ pub fn execute_cli<MI, E, K, V>(repo: &Repository<MI>, cwd: &Path, subcommand: &
     command.envs(envs);
     let process = command.spawn()?;
     let result = process.wait_with_output().unwrap();
-    Ok((result.status.code().unwrap(), result.stdout))
+    if attempt_alias && result.status.code().unwrap() != 0 {
+        Err(Error::WhichError)
+    } else {
+        Ok((result.status.code().unwrap(), result.stdout))
+    }
 }

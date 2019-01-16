@@ -23,6 +23,8 @@ mod command_integrity;
 mod command_web;
 mod authorship;
 
+#[cfg(feature = "module-manager")]
+mod command_module;
 mod cli;
 
 use which::which;
@@ -360,8 +362,26 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                  .help("Path to an additional [besides standard ones] web overlay"))
             .arg(Arg::with_name("listen")
                  .default_value("127.0.0.1:8080")
-                 .help("Listen on IP:PORT"))));
-
+                 .help("Listen on IP:PORT"))))
+        .conditionally(cfg!(feature = "module-manager"), |app|
+        app.subcommand(SubCommand::with_name("module")
+            .settings(&[clap::AppSettings::ColoredHelp, clap::AppSettings::ColorAuto])
+            .about("Built-in module manager")
+            .arg(
+                Arg::with_name("module-repository")
+                .short("m")
+                .long("module-repository")
+                .env("SIT_MODULE_REPOSITORY")
+                .default_value("default")
+                .help("Module repository identifier"),
+                )
+            .conditionally(cfg!(feature = "module-manager-fetch"), |cmd|
+            cmd.subcommand(SubCommand::with_name("update").
+                        about("Update module repository")))
+            .subcommand(
+                SubCommand::with_name("path")
+                .about("Prints a path to the module repository"),
+                )));
 
     if allow_external_subcommands {
         app = app.setting(clap::AppSettings::AllowExternalSubcommands);
@@ -443,7 +463,14 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                 let original_repo = repo.clone();
                 do_matches(matches.clone(), repo.with_module_iterator(ScriptModule(original_repo, cwd.clone(), name.to_string())), cwd.clone(), config, config_path)
             }
-            _ => do_matches(matches.clone(), repo, cwd.clone(), config, config_path),
+            _ => {
+                if repo.config().extra().contains_key("modules") {
+                    let original_repo = repo.clone();
+                    do_matches(matches.clone(), repo.with_module_iterator(ScriptModule(original_repo, cwd.clone(), "module".into())), cwd.clone(), config, config_path)
+                } else {
+                    do_matches(matches.clone(), repo, cwd.clone(), config, config_path)
+                }
+            }
         };
 
         fn do_matches<MI: 'static + Send + Sync>(matches: ArgMatches<'static>, repo: sit_core::Repository<MI>, cwd: PathBuf, config: cfg::Configuration, config_path: &str) -> i32
@@ -524,6 +551,10 @@ fn main_with_result(allow_external_subcommands: bool) -> i32 {
                 if let Some(web_matches) = matches.subcommand_matches("web") {
                     return command_web::command(repo, web_matches, matches.clone(), config, canonical_working_dir, config_path);
                 }
+            }
+
+            if let Some(matches) = matches.subcommand_matches("module") {
+                return command_module::command(repo, matches, config, cwd);
             }
 
             match command_external::command(&matches, repo, &cwd) {
